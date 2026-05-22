@@ -1,0 +1,7 @@
+{
+  "name": "llm_notebook_ng",
+  "version": "0.1.5",
+  "entry_module": "llm_notebook_ng.main",
+  "entry_function": "run",
+  "description": "Next-gen consistency-first LLM grading: shared rubric, ternary mark + separate confidence, layered cross-checks, image-aware"
+}

@@ -1,0 +1,15 @@
+[project]
+name = "llm-notebook-staged-pipeline"
+version = "0.1.1"
+requires-python = ">=3.12"
+dependencies = [
+  "llm-notebook-grader==0.1.1",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["llm_notebook_staged*"]

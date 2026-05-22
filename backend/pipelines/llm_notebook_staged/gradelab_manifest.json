@@ -1,0 +1,7 @@
+{
+  "name": "llm_notebook_staged",
+  "version": "0.1.1",
+  "entry_module": "llm_notebook_staged.main",
+  "entry_function": "run",
+  "description": "Staged LLM grading: parse → extract → check → validate → report"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "llm_notebook_free",
+  "version": "0.1.0",
+  "entry_module": "llm_notebook_free.main",
+  "entry_function": "run",
+  "description": "LLM grading without a reference notebook — tasks identified from student submissions"
+}

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gradelab-executor-worker"
+version = "0.1.0"
+description = "ARQ worker skeleton for GradeLab pipeline execution"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["arq>=0.26"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

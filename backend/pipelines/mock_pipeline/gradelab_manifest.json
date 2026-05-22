@@ -1,0 +1,7 @@
+{
+  "name": "mock_pipeline",
+  "version": "0.1.0",
+  "entry_module": "mock_pipeline.main",
+  "entry_function": "run",
+  "description": "Counts notebook cells and returns dummy scores"
+}

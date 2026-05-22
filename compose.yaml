@@ -1,0 +1,260 @@
+name: gradelab
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["27017:27017"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
+    volumes: [mongo_data:/data/db]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'mongosh --quiet -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "db.runCommand({ ping: 1 }).ok" | grep -q 1',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes: [minio_data:/data]
+    command: ["server", "/data", "--console-address", ":9001"]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.102.1
+    restart: unless-stopped
+    networks: [gradelab_net]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./infra/observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports: ["4317:4317", "4318:4318", "8889:8889"]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["9090:9090"]
+    volumes:
+      - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+
+  loki:
+    image: grafana/loki:2.9.8
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["3100:3100"]
+    volumes:
+      - ./infra/observability/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+
+  promtail:
+    image: grafana/promtail:3.4.2
+    restart: unless-stopped
+    networks: [gradelab_net]
+    environment:
+      DOCKER_API_VERSION: "1.44"
+    volumes:
+      - ./infra/observability/promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["-config.file=/etc/promtail/config.yml"]
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["3001:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/observability/grafana/provisioning/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    depends_on:
+      prometheus: { condition: service_started }
+      loki: { condition: service_started }
+
+  storage-manager:
+    build:
+      context: ./services/storage_manager
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["8081:8081"]
+    environment:
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      STORAGE_MANAGER_TOKEN: ${STORAGE_MANAGER_TOKEN:-devtoken}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB:-gradelab}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    depends_on:
+      minio: { condition: service_started }
+      mongodb: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  llm-proxy:
+    build:
+      context: ./services/llm_proxy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["8082:8082"]
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB:-gradelab}
+      LLMPROXY_SERVICE_TOKEN: ${LLMPROXY_SERVICE_TOKEN:-}
+      LOG_FULL_PAYLOADS: ${LOG_FULL_PAYLOADS:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    depends_on:
+      mongodb: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${PIPELINE_RUNNER_IMAGE:-gradelab/backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["8000:8000"]
+    volumes:
+      - ./data:/app/data
+      - ./backend/pipelines:/app/pipelines
+      - ./backend/app:/app/app
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ENV: ${ENV:-dev}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB:-gradelab}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RUN_EXECUTOR: ${RUN_EXECUTOR:-arq}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
+      STORAGE_MANAGER_URL: ${STORAGE_MANAGER_URL:-http://storage-manager:8081}
+      STORAGE_MANAGER_TOKEN: ${STORAGE_MANAGER_TOKEN:-devtoken}
+      LLMPROXY_URL: ${LLMPROXY_URL:-http://llm-proxy:8082}
+      LLMPROXY_SERVICE_TOKEN: ${LLMPROXY_SERVICE_TOKEN:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      ANYTASK_USERNAME: ${ANYTASK_USERNAME:-}
+      ANYTASK_PASSWORD: ${ANYTASK_PASSWORD:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      PROD_PUBLIC_AUTH: ${PROD_PUBLIC_AUTH:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      PIPELINE_RUNNER_IMAGE: ${PIPELINE_RUNNER_IMAGE:-gradelab/backend:local}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-gradelab_gradelab_net}
+      LLM_NOTEBOOK_GRADER_LOG_REQUESTS: ${LLM_NOTEBOOK_GRADER_LOG_REQUESTS:-0}
+      LOG_FULL_PAYLOADS: ${LOG_FULL_PAYLOADS:-false}
+    depends_on:
+      mongodb: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_started }
+      storage-manager: { condition: service_healthy }
+      llm-proxy: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  executor:
+    image: ${PIPELINE_RUNNER_IMAGE:-gradelab/backend:local}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    networks: [gradelab_net]
+    entrypoint: ["arq", "app.worker_settings.WorkerSettings"]
+    working_dir: /app
+    volumes:
+      - ./data:/app/data
+      - ./backend/pipelines:/app/pipelines
+      - ./backend/app:/app/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ENV: ${ENV:-dev}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB:-gradelab}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RUN_EXECUTOR: ${RUN_EXECUTOR:-arq}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
+      STORAGE_MANAGER_URL: ${STORAGE_MANAGER_URL:-http://storage-manager:8081}
+      STORAGE_MANAGER_TOKEN: ${STORAGE_MANAGER_TOKEN:-devtoken}
+      LLMPROXY_URL: ${LLMPROXY_URL:-http://llm-proxy:8082}
+      LLMPROXY_SERVICE_TOKEN: ${LLMPROXY_SERVICE_TOKEN:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      PIPELINE_RUNNER_IMAGE: ${PIPELINE_RUNNER_IMAGE:-gradelab/backend:local}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-gradelab_gradelab_net}
+      GRADELAB_EXECUTOR_USE_DOCKER: ${GRADELAB_EXECUTOR_USE_DOCKER:-true}
+      LLM_NOTEBOOK_GRADER_LOG_REQUESTS: ${LLM_NOTEBOOK_GRADER_LOG_REQUESTS:-0}
+      LLM_NOTEBOOK_NG_MAX_CONCURRENCY: ${LLM_NOTEBOOK_NG_MAX_CONCURRENCY:-4}
+      LLM_NOTEBOOK_NG_MAX_RPS: ${LLM_NOTEBOOK_NG_MAX_RPS:-0}
+      LLM_NOTEBOOK_NG_LOG_REQUESTS: ${LLM_NOTEBOOK_NG_LOG_REQUESTS:-0}
+      RUN_JOB_TIMEOUT: ${RUN_JOB_TIMEOUT:-5400}
+      DOCKER_HOST_DATA_DIR: ${DOCKER_HOST_DATA_DIR:-}
+      DOCKER_HOST_PIPELINES_DIR: ${DOCKER_HOST_PIPELINES_DIR:-}
+    depends_on:
+      backend: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      mongodb: { condition: service_healthy }
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    networks: [gradelab_net]
+    ports: ["3000:80"]
+    depends_on:
+      backend: { condition: service_healthy }
+
+networks:
+  gradelab_net:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  redis_data:
+  minio_data:
+  loki_data:
+  grafana_data:

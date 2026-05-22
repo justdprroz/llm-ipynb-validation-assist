@@ -1,0 +1,7 @@
+{
+  "name": "llm_notebook_instant",
+  "version": "0.2.1",
+  "entry_module": "llm_notebook_instant.main",
+  "entry_function": "run",
+  "description": "Reference-based instant LLM grading (ported from llm-assisted-notebook-validation)"
+}

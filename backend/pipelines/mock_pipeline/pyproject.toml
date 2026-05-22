@@ -1,0 +1,10 @@
+[project]
+name = "mock-pipeline"
+version = "0.1.0"
+description = "Counts notebook cells and returns dummy scores"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

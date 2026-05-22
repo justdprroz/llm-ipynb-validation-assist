@@ -1,0 +1,15 @@
+[project]
+name = "llm-notebook-instant-pipeline"
+version = "0.2.1"
+requires-python = ">=3.12"
+dependencies = [
+  "llm-notebook-grader==0.2.1",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["llm_notebook_instant*"]

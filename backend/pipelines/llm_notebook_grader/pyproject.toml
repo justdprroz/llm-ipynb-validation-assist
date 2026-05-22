@@ -1,0 +1,17 @@
+[project]
+name = "llm-notebook-grader"
+version = "0.2.1"
+description = "Shared LLM notebook grading logic for GradeLab pipelines"
+requires-python = ">=3.12"
+dependencies = [
+  "requests>=2.31.0",
+  "Pillow>=10.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["llm_notebook_grader*"]
